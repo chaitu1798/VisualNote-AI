@@ -1,0 +1,25 @@
+{
+  "name": "visualnote-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "VisualNote AI — Turn videos into visual knowledge (FYP Edition)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace=apps/web run dev",
+    "build:web": "npm --workspace=apps/web run build",
+    "lint:web": "npm --workspace=apps/web run lint"
+  },
+  "keywords": [
+    "visualnote",
+    "video-to-notes",
+    "edtech",
+    "ai",
+    "fastapi",
+    "nextjs"
+  ],
+  "author": "",
+  "license": "UNLICENSED"
+}
