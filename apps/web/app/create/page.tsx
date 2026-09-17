@@ -13,8 +13,17 @@ import {
   ExternalLink,
   ChevronRight,
   BookOpen,
+  RefreshCw,
 } from 'lucide-react';
-import { runPipeline, PipelineRunResponse, STORAGE_BASE } from '../../lib/api';
+import {
+  createSource,
+  createAsyncJob,
+  pollJobUntilDone,
+  runPipeline,
+  PipelineRunResponse,
+  JobDetailResponse,
+  STORAGE_BASE,
+} from '../../lib/api';
 
 const SAMPLES = {
   os: {
@@ -40,11 +49,13 @@ const SAMPLES = {
 };
 
 const STAGES = [
-  { id: 'created', label: 'Initialized' },
+  { id: 'created', label: 'Created' },
+  { id: 'queued', label: 'Queued' },
+  { id: 'extracting', label: 'Extracting' },
   { id: 'transcribing', label: 'Transcribing' },
-  { id: 'analyzing', label: 'Extracting Concepts' },
-  { id: 'planning', label: 'Visual Planning' },
-  { id: 'rendering', label: 'Deterministic Rendering' },
+  { id: 'analyzing', label: 'Concepts' },
+  { id: 'planning', label: 'Planning' },
+  { id: 'rendering', label: 'Rendering' },
   { id: 'completed', label: 'Complete' },
 ];
 
@@ -58,6 +69,8 @@ export default function CreatePage() {
 
   const [loading, setLoading] = useState(false);
   const [currentStage, setCurrentStage] = useState<string>('created');
+  const [currentProgress, setCurrentProgress] = useState<number>(0);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PipelineRunResponse | null>(null);
   const [activeTab, setActiveTab] = useState<'preview' | 'concepts' | 'plan' | 'transcript'>('preview');
@@ -65,31 +78,71 @@ export default function CreatePage() {
   const handleStartPipeline = async () => {
     setLoading(true);
     setError(null);
-    setCurrentStage('transcribing');
+    setCurrentStage('queued');
+    setCurrentProgress(0.05);
 
     try {
       let rawText = '';
-      if (inputMode === 'sample') {
-        rawText = SAMPLES[selectedSample].text;
+      let sourceId: string | undefined = undefined;
+
+      if (inputMode === 'upload' && selectedFile) {
+        const sourceResp = await createSource({ file: selectedFile });
+        sourceId = sourceResp.id;
       } else if (inputMode === 'paste') {
         rawText = customText.trim();
         if (!rawText) throw new Error('Please enter transcript text.');
+      } else {
+        rawText = SAMPLES[selectedSample].text;
       }
 
-      const response = await runPipeline({
-        rawText: inputMode === 'upload' ? undefined : rawText,
-        file: inputMode === 'upload' ? selectedFile : undefined,
+      // Generate a client-side idempotency key
+      const idempotencyKey = `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      // Create asynchronous background job
+      const job = await createAsyncJob({
+        sourceId,
+        rawText: sourceId ? undefined : rawText,
         theme,
         learningLevel,
-        mockMode: true,
+        idempotencyKey,
       });
 
-      if (response.status === 'FAILED') {
-        throw new Error(response.error || 'Pipeline failed during processing.');
+      setActiveJobId(job.id);
+      setCurrentStage(job.current_stage || 'queued');
+      setCurrentProgress(job.progress || 0.05);
+
+      // Poll background worker until completion
+      const completedJob = await pollJobUntilDone(
+        job.id,
+        (progressJob: JobDetailResponse) => {
+          setCurrentStage(progressJob.current_stage);
+          setCurrentProgress(progressJob.progress);
+        },
+        1200,
+        90
+      );
+
+      if (completedJob.status === 'FAILED') {
+        throw new Error(completedJob.error_message || 'Background worker processing failed.');
       }
 
-      setResult(response);
-      setCurrentStage(response.current_stage || 'completed');
+      // Construct view result from completed job result_data
+      const resData = completedJob.result_data || {};
+      setResult({
+        job_id: completedJob.id,
+        project_id: completedJob.project_id,
+        status: completedJob.status,
+        current_stage: completedJob.current_stage,
+        progress: completedJob.progress,
+        render_result: {
+          page_title: (resData.page_title as string) || 'Educational Note',
+          image_url: resData.image_url as string,
+          html_url: resData.html_url as string,
+          status: 'READY',
+        },
+      });
+      setCurrentStage('completed');
+      setCurrentProgress(1.0);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Pipeline execution encountered an error.';
       setError(message);
@@ -309,10 +362,17 @@ export default function CreatePage() {
           <div className="lg:col-span-7 space-y-6">
             {/* Live Stepper */}
             <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-5 shadow-xl">
-              <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
-                Pipeline Lifecycle
-              </h3>
-              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                  Background Pipeline Lifecycle
+                </h3>
+                {activeJobId && (
+                  <span className="text-[11px] font-mono text-slate-400 bg-slate-800/60 px-2 py-0.5 rounded">
+                    Job: {activeJobId}
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 mb-3">
                 {STAGES.map((s, idx) => {
                   const currIdx = getStageIndex(currentStage);
                   const isDone = currIdx >= idx && currentStage !== 'failed';

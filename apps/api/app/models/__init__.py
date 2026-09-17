@@ -8,6 +8,7 @@ from app.models.concept import Concept
 from app.models.visual_plan import VisualPlan
 from app.models.page import Page
 from app.models.job import GenerationJob
+from app.models.render_result import RenderResult
 from app.models.export import Export
 
 __all__ = [
@@ -22,5 +23,7 @@ __all__ = [
     "VisualPlan",
     "Page",
     "GenerationJob",
+    "RenderResult",
     "Export",
 ]
+

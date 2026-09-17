@@ -8,8 +8,8 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
-class StorageService(ABC):
-    """Abstract base class for storage providers."""
+class StorageProvider(ABC):
+    """Abstract base class / interface for storage providers."""
 
     @abstractmethod
     def save(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
@@ -17,9 +17,13 @@ class StorageService(ABC):
         pass
 
     @abstractmethod
-    def get(self, key: str) -> Optional[bytes]:
+    def read(self, key: str) -> Optional[bytes]:
         """Retrieves raw data for a given key, or None if not found."""
         pass
+
+    def get(self, key: str) -> Optional[bytes]:
+        """Backward compatibility alias for read()."""
+        return self.read(key)
 
     @abstractmethod
     def delete(self, key: str) -> bool:
@@ -37,55 +41,77 @@ class StorageService(ABC):
         pass
 
 
-class LocalStorageService(StorageService):
+# Backward compatibility alias
+StorageService = StorageProvider
+
+
+class LocalStorageProvider(StorageProvider):
     """Local filesystem storage implementation for development."""
 
-    def __init__(self, base_dir: Optional[str] = None):
-        self.base_dir = Path(base_dir or settings.STORAGE_LOCAL_DIR)
+    def __init__(self, base_dir: Optional[str] = None, base_path: Optional[str] = None):
+        target = base_dir or base_path or settings.STORAGE_LOCAL_DIR
+        self.base_dir = Path(target).resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def _resolve_path(self, key: str) -> Path:
-        # Sanitize key to prevent path traversal
-        clean_key = key.lstrip("/\\")
-        return self.base_dir / clean_key
+        norm_key = key.replace("\\", "/").strip()
+        parts = norm_key.split("/")
+        if ".." in parts or norm_key.startswith("/"):
+            raise ValueError(f"Path traversal detected for storage key: {key}")
+        resolved = (self.base_dir / key).resolve()
+        try:
+            resolved.relative_to(self.base_dir)
+        except ValueError:
+            raise ValueError(f"Path traversal detected for storage key: {key}")
+        return resolved
 
     def save(self, key: str, data: bytes, content_type: str = "application/octet-stream") -> str:
         file_path = self._resolve_path(key)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_bytes(data)
         logger.info(f"Saved {len(data)} bytes to {file_path}")
-        return str(file_path.as_posix())
+        return key
 
-    def get(self, key: str) -> Optional[bytes]:
+    def read(self, key: str) -> Optional[bytes]:
         file_path = self._resolve_path(key)
-        if not file_path.exists():
+        if not file_path.exists() or not file_path.is_file():
             return None
         return file_path.read_bytes()
 
     def delete(self, key: str) -> bool:
         file_path = self._resolve_path(key)
-        if file_path.exists():
+        if file_path.exists() and file_path.is_file():
             file_path.unlink()
             return True
         return False
 
     def exists(self, key: str) -> bool:
-        return self._resolve_path(key).exists()
+        file_path = self._resolve_path(key)
+        return file_path.exists() and file_path.is_file()
+
 
     def get_url(self, key: str) -> str:
-        file_path = self._resolve_path(key)
-        return f"/storage/{key.lstrip('/')}"
+        clean_key = key.replace("\\", "/").lstrip("/")
+        return f"/storage/{clean_key}"
 
 
-_storage_service: Optional[StorageService] = None
+# Backward compatibility alias
+LocalStorageService = LocalStorageProvider
+
+_storage_provider: Optional[StorageProvider] = None
 
 
-def get_storage_service() -> StorageService:
-    global _storage_service
-    if _storage_service is None:
+def get_storage_provider() -> StorageProvider:
+    global _storage_provider
+    if _storage_provider is None:
         if settings.STORAGE_PROVIDER == "local":
-            _storage_service = LocalStorageService()
+            _storage_provider = LocalStorageProvider()
         else:
-            # Fallback to local for dev
-            _storage_service = LocalStorageService()
-    return _storage_service
+            _storage_provider = LocalStorageProvider()
+    return _storage_provider
+
+
+# Backward compatibility alias
+def get_storage_service() -> StorageProvider:
+    return get_storage_provider()
+

@@ -18,6 +18,11 @@ from app.schemas.project import (
     OutputModeEnum,
     VisualStyleEnum,
 )
+from app.schemas.source import (
+    SourceCreateRequest,
+    SourceResponse,
+    SourceDetailResponse,
+)
 from app.schemas.job import JobStatusResponse, JobStatusEnum, JobTypeEnum
 
 from app.schemas.transcript import (
@@ -33,6 +38,7 @@ from app.schemas.visual_plan import (
 )
 from app.schemas.generation import (
     PipelineStageEnum,
+    AsyncJobCreateRequest,
     PipelineRunRequest,
     RenderRequest,
     RenderResponse,
@@ -53,6 +59,9 @@ __all__ = [
     "ProjectUpdate",
     "ProjectResponse",
     "SourceTypeEnum",
+    "SourceCreateRequest",
+    "SourceResponse",
+    "SourceDetailResponse",
     "ProjectStatusEnum",
     "LearningLevelEnum",
     "OutputModeEnum",
@@ -68,9 +77,11 @@ __all__ = [
     "VisualPlanRequest",
     "VisualPlanResponse",
     "PipelineStageEnum",
+    "AsyncJobCreateRequest",
     "PipelineRunRequest",
     "RenderRequest",
     "RenderResponse",
     "PipelineRunResponse",
     "JobDetailResponse",
 ]
+
