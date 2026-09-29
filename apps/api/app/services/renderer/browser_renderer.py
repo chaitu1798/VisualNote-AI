@@ -10,7 +10,7 @@ import logging
 from app.core.config import settings
 from app.schemas.visual_plan import VisualPlanResponse
 from app.schemas.generation import RenderResponse
-from app.services.renderer.concept_card_renderer import ConceptCardRenderer
+from app.services.renderer.core.page_composer import PageComposer
 from app.services.renderer.theme import get_theme
 from app.services.storage_service import get_storage_service
 
@@ -62,7 +62,9 @@ class BrowserRenderer:
         Renders a VisualPlanResponse into HTML, SVG, and PNG files.
         """
         base_id = f"note_{uuid.uuid4().hex[:10]}"
-        html_content = ConceptCardRenderer.render_page_html(visual_plan)
+
+        composer = PageComposer(visual_plan)
+        html_content = composer.render()
 
         # 1. Save HTML to storage
         html_key = f"generated/{base_id}.html"
@@ -127,15 +129,14 @@ class BrowserRenderer:
 
     def _generate_svg_card(self, visual_plan: VisualPlanResponse) -> str:
         """Generates a standalone crisp vector SVG representation of the visual plan."""
+        from app.services.renderer.core.layout_engine import LayoutEngine
+        from app.services.renderer.core.context import RenderContext
+
         theme = get_theme(visual_plan.theme)
         title = html.escape(visual_plan.page_title, quote=True)
+        context = RenderContext(theme=theme)
 
-        sections = visual_plan.sections or []
-        card_height = 200 + max(1, len(sections)) * 260
-        total_height = max(550, card_height)
-
-        svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 {total_height}" width="100%" height="100%">
-  <defs>
+        svg_defs = f"""  <defs>
     <style>
       .title {{ font-family: 'Inter', -apple-system, sans-serif; font-size: 24px; font-weight: bold; fill: {theme.text_primary}; }}
       .header-tag {{ font-family: sans-serif; font-size: 11px; font-weight: bold; fill: {theme.accent}; letter-spacing: 1px; text-transform: uppercase; }}
@@ -158,18 +159,21 @@ class BrowserRenderer:
   <text x="790" y="48" font-family="sans-serif" font-size="11px" font-weight="bold" fill="{theme.accent}" text-anchor="middle">VisualNote AI</text>
   <line x1="40" y1="96" x2="840" y2="96" stroke="{theme.card_border}" stroke-width="1.5"/>
 """
-
         y = 120
-        for i, sec in enumerate(sections):
+        svg_sections = ""
+
+        for i, sec in enumerate(visual_plan.sections or []):
+            bounds = LayoutEngine.compute_component_bounds(sec, context, y)
+
             c = sec.content
             c_title = html.escape(c.title, quote=True)
             c_type = html.escape(c.concept_type.upper(), quote=True)
             c_exp = html.escape(c.explanation[:140], quote=True)
             c_score = f"{c.importance_score:.2f}" if c.importance_score is not None else "0.50"
 
-            svg += f"""
+            svg_sections += f"""
   <!-- Section {i+1} Card -->
-  <rect x="40" y="{y}" width="800" height="230" rx="10" fill="{theme.card_bg}" stroke="{theme.card_border}" stroke-width="1"/>
+  <rect x="40" y="{y}" width="800" height="{bounds.height}" rx="10" fill="{theme.card_bg}" stroke="{theme.card_border}" stroke-width="1"/>
   <rect x="60" y="{y+16}" width="90" height="22" rx="4" fill="{theme.badge_bg}"/>
   <text x="105" y="{y+31}" class="badge-text" text-anchor="middle">{c_type}</text>
   <text x="820" y="{y+32}" class="score-text" text-anchor="end">Score: {c_score}</text>
@@ -180,25 +184,17 @@ class BrowserRenderer:
   <line x1="60" y1="{y+74}" x2="60" y2="{y+116}" stroke="{theme.accent}" stroke-width="3"/>
   <text x="74" y="{y+100}" class="body-text">{c_exp}</text>
 """
-            # Key Points in Card
-            pt_y = y + 138
-            pts = c.supporting_points[:3] if c.supporting_points else ["Core technical concept"]
-            for pt in pts:
-                pt_text = html.escape(pt[:75], quote=True)
-                svg += f"""
-  <circle cx="68" cy="{pt_y}" r="3.5" fill="{theme.accent}"/>
-  <text x="82" y="{pt_y+4}" class="bullet-text">{pt_text}</text>
-"""
-                pt_y += 24
+            y += bounds.height + 24
 
-            y += 250
+        total_height = max(550, y + 60)
 
-        # Footer
-        svg += f"""
+        svg_footer = f"""
   <line x1="40" y1="{y+10}" x2="840" y2="{y+10}" stroke="{theme.card_border}" stroke-width="1"/>
   <text x="40" y="{y+28}" class="footer-text">Deterministic Layout • Style: {theme.name}</text>
   <text x="840" y="{y+28}" class="footer-text" text-anchor="end">Verified Factual Knowledge</text>
-</svg>"""
+"""
+
+        svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 {total_height}" width="100%" height="100%">\n' + svg_defs + svg_sections + svg_footer + "</svg>"
         return svg
 
 
