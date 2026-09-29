@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronLeft, ChevronRight, AlertCircle, RefreshCcw } from 'lucide-react';
-import { getJobStatus, JobDetailResponse } from '../../../lib/api';
+import { getJobStatus, JobDetailResponse, retryJob } from '../../../lib/api';
 import { VisualNoteViewer } from '../../../components/viewer/VisualNoteViewer';
 import { PageSidebar } from '../../../components/notebook/PageSidebar';
 import { ExportMenu } from '../../../components/notebook/ExportMenu';
@@ -14,6 +14,22 @@ export default function NotebookPage({ params }: { params: { jobId: string } }) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [retrying, setRetrying] = useState(false);
+
+  const handleRetry = async () => {
+    try {
+      setRetrying(true);
+      setError(null);
+      await retryJob(params.jobId);
+      // after retry, we should poll again. For simplicity, just reload the page which will trigger fetchJob and possibly poll if we had polling, but wait, this page doesn't poll. It should.
+      // let's just fetchJob, wait, the page doesn't have polling implemented. Let's just fetchJob.
+      await fetchJob();
+    } catch (err: any) {
+      setError(err.message || 'Failed to retry job.');
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   const fetchJob = useCallback(async () => {
     try {
@@ -88,20 +104,47 @@ export default function NotebookPage({ params }: { params: { jobId: string } }) 
   }
 
   if (job.status !== 'COMPLETED') {
+    const isFailed = job.status === 'FAILED' || job.status === 'CANCELLED';
+
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4">
         <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full text-center border border-slate-100">
-          <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <RefreshCcw className="w-8 h-8 text-amber-500" />
+          <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-6 ${isFailed ? 'bg-red-100' : 'bg-amber-100'}`}>
+            {isFailed ? (
+              <AlertCircle className="w-8 h-8 text-red-500" />
+            ) : (
+              <RefreshCcw className={`w-8 h-8 text-amber-500 ${job.status === 'PROCESSING' ? 'animate-spin' : ''}`} />
+            )}
           </div>
-          <h1 className="text-2xl font-bold text-slate-800 mb-2">Generation in Progress</h1>
-          <p className="text-slate-500 mb-8">This visual note is still being prepared.</p>
-          <button
-            onClick={() => router.push('/create')}
-            className="w-full py-3 px-4 rounded-xl font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-200"
-          >
-            Go Back
-          </button>
+          <h1 className="text-2xl font-bold text-slate-800 mb-2">
+            {isFailed ? 'Generation Failed' : 'Generation in Progress'}
+          </h1>
+          <p className="text-slate-500 mb-8">
+            {isFailed
+              ? (job.error_message || 'Something went wrong during generation.')
+              : 'This visual note is still being prepared.'}
+          </p>
+          <div className="flex flex-col gap-3">
+            {isFailed && (
+              <button
+                onClick={handleRetry}
+                disabled={retrying}
+                className="w-full py-3 px-4 rounded-xl font-semibold bg-indigo-600 text-white hover:bg-indigo-700 transition-colors shadow-md shadow-indigo-200 disabled:opacity-50"
+              >
+                {retrying ? 'Retrying...' : 'Retry Generation'}
+              </button>
+            )}
+            <button
+              onClick={() => router.push('/create')}
+              className={`w-full py-3 px-4 rounded-xl font-semibold transition-colors ${
+                isFailed
+                  ? 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-md shadow-indigo-200'
+              }`}
+            >
+              Go Back
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -129,7 +172,7 @@ export default function NotebookPage({ params }: { params: { jobId: string } }) 
           >
             New Note
           </button>
-          {renderResult && <ExportMenu renderResult={renderResult} />}
+          {renderResult && <ExportMenu renderResult={renderResult} projectId={job?.project_id || undefined} />}
         </div>
       </header>
 

@@ -1,25 +1,36 @@
 import React, { useState } from 'react';
 import { Download, ChevronDown, Check, Loader2 } from 'lucide-react';
-import { STORAGE_BASE, RenderResponse } from '../../lib/api';
+import { STORAGE_BASE, RenderResponse, exportPdf } from '../../lib/api';
 
 interface ExportMenuProps {
   renderResult: RenderResponse;
+  projectId?: string;
 }
 
-export function ExportMenu({ renderResult }: ExportMenuProps) {
+export function ExportMenu({ renderResult, projectId }: ExportMenuProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
 
   const availableFormats: { id: string; label: string; url?: string | null }[] = [
+    { id: 'pdf', label: 'Study Pack (PDF)' },
     { id: 'png', label: 'PNG Image', url: renderResult.image_url },
-    { id: 'svg', label: 'SVG Vector', url: renderResult.html_url }, // Assuming HTML holds SVG or we can't extract raw SVG easily as download, wait: svg_content is present but not URL. Wait, RenderResponse has html_url. We'll map accordingly.
-  ].filter(f => !!f.url || (f.id === 'svg' && renderResult.svg_content));
+    { id: 'svg', label: 'SVG Vector', url: renderResult.html_url },
+  ].filter(f => f.id === 'pdf' ? !!projectId : (!!f.url || (f.id === 'svg' && renderResult.svg_content)));
 
   const handleDownload = async (format: string, urlOrContent?: string | null) => {
-    if (!urlOrContent) return;
     setDownloading(format);
     try {
-      if (format === 'svg' && renderResult.svg_content) {
+      if (format === 'pdf' && projectId) {
+        const { url } = await exportPdf(projectId);
+        const fullUrl = url.startsWith('http') ? url : `${STORAGE_BASE}${url}`;
+        const res = await fetch(fullUrl);
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `${renderResult.page_title.replace(/\s+/g, '_')}_StudyPack.pdf`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      } else if (format === 'svg' && renderResult.svg_content) {
         // Download raw SVG string
         const blob = new Blob([renderResult.svg_content], { type: 'image/svg+xml' });
         const a = document.createElement('a');

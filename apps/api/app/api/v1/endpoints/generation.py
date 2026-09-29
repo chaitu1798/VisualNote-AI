@@ -193,6 +193,57 @@ async def create_async_generation_job(
     return JobDetailResponse.model_validate(job)
 
 
+@router.post("/{job_id}/retry", response_model=JobDetailResponse)
+def retry_job(job_id: str, db: Session = Depends(get_db)):
+    """
+    Retries a failed generation job by resetting its status and enqueuing it again.
+    """
+    job = db.query(GenerationJob).filter(GenerationJob.id == job_id).first()
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job '{job_id}' not found."
+        )
+
+    if job.status not in ("FAILED", "CANCELLED"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Only failed or cancelled jobs can be retried. Current status is {job.status}"
+        )
+
+    # Reset state
+    job.status = "QUEUED"
+    job.current_stage = "queued"
+    job.progress = 0.05
+    job.error_message = None
+    job.error_code = None
+    job.retry_count = 0  # reset retry count to give it a fresh start
+    db.commit()
+    db.refresh(job)
+
+    # Re-enqueue
+    queue_service = get_job_queue_service()
+
+    source = db.query(Source).filter(Source.id == job.source_id).first()
+    raw_text = None
+    if source and source.meta_data and "raw_text" in source.meta_data:
+        raw_text = source.meta_data["raw_text"]
+
+    # Check if there is an idempotent payload
+    # For a robust system we would store the initial payload, but since worker reads from source anyway, we just construct minimal payload
+    queue_service.enqueue_job(
+        job_id=job.id,
+        payload={
+            "job_id": job.id,
+            "project_id": job.project_id,
+            "source_id": job.source_id,
+            "theme": settings.DEFAULT_THEME, # could pull from visual plan if needed
+            "learning_level": "INTERMEDIATE",
+            "raw_text": raw_text,
+        }
+    )
+
+    return JobDetailResponse.model_validate(job)
 @router.post("/pipeline", response_model=PipelineRunResponse)
 async def run_pipeline_endpoint(
     fastapi_req: Request,
